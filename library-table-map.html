@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Library Table Occupancy</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#14101f;--fg:#f3e9d2;--ac:#ffcc4d;--pn:#241c3a;--ln:#6a5acd;--ok:#7bd152;--no:#e84a5f;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:dark}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#14101f;--fg:#f3e9d2;--ac:#ffcc4d;--pn:#241c3a;--ln:#6a5acd}}
+:root[data-theme="dark"]{--bg:#14101f;--fg:#f3e9d2;--ac:#ffcc4d;--pn:#241c3a;--ln:#6a5acd}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--fg);font-family:'Press Start 2P',ui-monospace,Menlo,monospace}
+body{display:flex;flex-direction:column;align-items:center;gap:12px;padding:12px;user-select:none;-webkit-user-select:none}
+header{width:min(100%,700px);display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid var(--ln);padding-bottom:10px;flex-wrap:wrap;gap:8px}
+h1{margin:0;font-size:clamp(9px,1.8vw,14px);color:var(--ac);text-shadow:2px 2px #6a2d8f}
+.actions{display:flex;gap:6px}
+button{font:inherit;font-size:8px;background:var(--pn);color:var(--fg);border:2px solid var(--ln);padding:7px 10px;cursor:pointer;touch-action:manipulation}
+button:active{background:var(--ln)}
+button.primary{background:#27ae60;border-color:#2ecc71;color:#fff}
+.card{width:min(100%,700px);background:var(--pn);border:3px solid var(--ln);padding:12px;display:flex;flex-direction:column;gap:10px;box-shadow:4px 4px #000}
+#status{font-size:7px;text-align:center;line-height:1.6}
+.tabs{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+.tab.active{background:var(--ln);color:var(--ac);border-color:var(--ac)}
+.map-wrap{width:100%;aspect-ratio:24/14;background:#000;border:2px solid var(--ln)}
+canvas{width:100%;height:100%;display:block;image-rendering:pixelated}
+.legend{display:flex;justify-content:center;gap:14px;font-size:7px;color:#9d92c8;flex-wrap:wrap}
+.legend i{display:inline-block;width:8px;height:8px;border:1px solid #000;margin-right:4px}
+#sum{font-size:7px;text-align:center;line-height:1.9;color:var(--fg)}
+#detail{font-size:7px;line-height:2;border:2px dashed var(--ln);padding:8px;min-height:64px;color:var(--fg)}
+</style>
+</head>
+<body>
+<header>
+<h1>LIBRARY TABLE OCCUPANCY</h1>
+<div class="actions"><button id="refresh" class="primary">REFRESH</button><button id="auto">AUTO: ON</button></div>
+</header>
+<div class="card">
+<div id="status">Connecting to Library Quest...</div>
+<div class="tabs" id="tabs">
+<button class="tab active" data-f="0">FLR 1 RECEPTION</button>
+<button class="tab" data-f="1">FLR 2 QUIET</button>
+<button class="tab" data-f="2">FLR 3 SILENT</button>
+</div>
+<div class="map-wrap"><canvas id="cv" width="384" height="224"></canvas></div>
+<div class="legend"><span><i style="background:#7bd152"></i>VACANT</span><span><i style="background:#e84a5f"></i>OCCUPIED</span><span><i style="background:#888"></i>NO DATA</span></div>
+<div id="sum"></div>
+<div id="detail"></div>
+</div>
+<script>
+/* ===== Maps (identical to Library Quest) ===== */
+const T=16,KEY='lib-occ';
+/* Shared database (optional): paste the SAME Cloudflare Worker URL used in library-checkin.html, e.g. 'https://library-checkin.your-name.workers.dev'. Leave empty for local-only mode. */
+const DB_URL='https://library-checkin.nawfalnajmi8.workers.dev';const DB=DB_URL.replace(/\/$/,'');
+let lastPull=0;
+async function pull(){if(!DB||Date.now()-lastPull<5000)return;lastPull=Date.now();try{const d=await(await fetch(DB+'/checkins')).json();if(Array.isArray(d)){CIN=d;render()}}catch(e){}}
+const BC=['#c0392b','#2980b9','#27ae60','#f1c40f','#8e44ad','#e67e22'];
+const LV=[
+{name:'RECEPTION',win:'#9fd8ff',fl:['#efe9d8','#59597a'],wall:'#2f2a5e',map:[
+"##WW##WW########WW##WW##","#V..G..I..F.F..I...G...#","#........DDQDD.........#","#G....................G#","#..vv..............vv..#","#..TT..............TT..#","#..^^..............^^..#","#......................#","#.SSSS..........SSSS...#","#......................#","#.BBBB....I....I..BBBB.#","#.....................U#","#......................#","########################"]},
+{name:'QUIET FLOOR',win:'#a9b8f0',fl:['#8fa9c7','#869fbd'],wall:'#3d4f6b',map:[
+"########K####K####K#####","#.....vv...vv...vv.....#","W>T<..TT...TT...TT..>T<W","#>T<..^^...^^...^^..>T<#","#...I..............I...#","#....BBBBBB..BBBBBB....#","W>T<....CC.CC.CC....>T<W","#>T<.......XX.......>T<#","#....BBBBBB..BBBBBB....#","#......................#","W>T<..vv...vv...vv..>T<W","#>T<..TT...TT...TT..>T<#","#N....^^...^^...^^....U#","########K####K####K#####"]},
+{name:'SILENT FLOOR',win:'#1b2a5a',fl:['#6f8f7a','#678771'],wall:'#2c4a3d',map:[
+"########K####K####K#####","#.....vv...vv...vv.....#","W>T<..TT...TT...TT..>T<W","#>T<..^^...^^...^^..>T<#","#...I..............I...#","#....OO..OO..OO..GG....#","W>T<....PPP.PPP.....>T<W","#>T<.......I...I....>T<#","#....OO..OO..OO..GG....#","#......................#","W>T<..vv...vv...vv..>T<W","#>T<..TT...TT...TT..>T<#","#N....^^...^^...^^.....#","########K####K####K#####"]}];
+
+const cv=document.getElementById('cv'),g=cv.getContext('2d');g.imageSmoothingEnabled=false;
+const R=(c,x,y,w,h)=>{g.fillStyle=c;g.fillRect(x,y,w,h)};
+let cur=0,snap=null,auto=true,CIN=[],sel=null;
+/* ===== Tables + real check-ins (from Library Check-In) ===== */
+function buildTables(){const out=[];LV.forEach((L,fi)=>{const M=L.map;let n=0;const seen=new Set();M.forEach((row,r)=>[...row].forEach((ch,c)=>{
+ if(ch!=='T'||seen.has(c+','+r))return;const cells=[[c,r]];
+ if(M[r][c+1]==='T')cells.push([c+1,r]);else if(M[r+1]&&M[r+1][c]==='T')cells.push([c,r+1]);
+ cells.forEach(([a,b])=>seen.add(a+','+b));const seats=[];
+ cells.forEach(([a,b])=>[[0,-1,'v'],[0,1,'^'],[-1,0,'>'],[1,0,'<']].forEach(([dx,dy,k])=>{if((M[b+dy]||'')[a+dx]===k)seats.push([a+dx,b+dy])}));
+ out.push({id:'F'+(fi+1)+'-T'+(++n),floor:fi,cells,seats})}))});return out}
+const TABLES=buildTables();
+const act=id=>CIN.filter(s=>s.table===id&&s.end>Date.now());
+const left=ms=>{const m=Math.max(0,Math.ceil(ms/60000));return Math.floor(m/60)+'H '+String(m%60).padStart(2,'0')+'M'};
+const tblOcc=(t,st)=>t.seats.filter(([c,r])=>st.get(c+','+r)===1).length;
+function overlay(){const st=seatMap(cur);TABLES.filter(t=>t.floor===cur).forEach(t=>{const o=tblOcc(t,st);
+ t.cells.forEach(([c,r])=>R(o?'rgba(232,74,95,.5)':'rgba(123,209,82,.4)',c*T,r*T+2,T,T-4));
+ if(t.id===sel){const xs=t.cells.map(a=>a[0]),ys=t.cells.map(a=>a[1]);g.strokeStyle='#ffcc4d';g.lineWidth=2;g.strokeRect(Math.min(...xs)*T-3,Math.min(...ys)*T-3,(Math.max(...xs)-Math.min(...xs)+1)*T+6,(Math.max(...ys)-Math.min(...ys)+1)*T+6)}})}
+function summary(){return LV.map((L,i)=>{const st=seatMap(i),ts=TABLES.filter(t=>t.floor===i);return 'FLOOR '+(i+1)+': '+ts.filter(t=>tblOcc(t,st)).length+' / '+ts.length+' TABLES IN USE'}).join('<br>')}
+function detail(){const el=document.getElementById('detail'),t=TABLES.find(x=>x.id===sel);
+ if(!t){el.textContent='TAP A TABLE TO SEE HOW LONG THE PEOPLE THERE WILL STUDY.';return}
+ const st=seatMap(t.floor),o=tblOcc(t,st),a=act(t.id).sort((x,y)=>x.end-y.end),sim=Math.max(0,o-a.length);
+ let h='<b style="color:#ffcc4d">TABLE '+t.id+' (FLOOR '+(t.floor+1)+')</b><br>'+(o?o+' / '+t.seats.length+' SEATS TAKEN':'VACANT: '+t.seats.length+' SEATS FREE')+'<br>';
+ a.forEach((s,i)=>h+='PERSON '+(i+1)+': '+left(s.end-Date.now())+' LEFT<br>');
+ if(sim)h+=sim+' SIMULATED VISITOR(S): TIME N/A<br>';el.innerHTML=h}
+cv.addEventListener('pointerdown',e=>{const b=cv.getBoundingClientRect(),c=Math.floor((e.clientX-b.left)/b.width*24),r=Math.floor((e.clientY-b.top)/b.height*14);
+ const t=TABLES.find(t=>t.floor===cur&&(t.cells.some(([a,d])=>a===c&&d===r)||t.seats.some(([a,d])=>a===c&&d===r)));sel=t?t.id:null;render()});
+
+/* ===== Drawing ===== */
+function tile(ch,c,r,L,st){const x=c*T,y=r*T;R(L.fl[(c+r)&1],x,y,T,T);
+ switch(ch){
+ case'#':R(L.wall,x,y,T,T);R('rgba(255,255,255,.18)',x,y,T,3);R('rgba(0,0,0,.3)',x,y+T-2,T,2);break;
+ case'W':R(L.wall,x,y,T,T);R('#f3e9d2',x+1,y+2,T-2,T-5);R(L.win,x+2,y+3,T-4,T-7);break;
+ case'K':R(L.wall,x,y,T,T);R('#e8e0c8',x+4,y+5,8,7);R('#222',x+6,y+7,1,3);R('#222',x+9,y+7,1,3);break;
+ case'I':R('rgba(0,0,0,.25)',x+2,y+13,12,3);R('#d8d2c4',x+3,y,10,T-1);R('#f2eee4',x+3,y,3,T-1);break;
+ case'Q':R('#7c5a3a',x,y+3,T,T-3);R('#fff',x+3,y,10,10);R('#000',x+4,y+1,3,3);R('#000',x+9,y+1,3,3);R('#000',x+4,y+6,3,3);break;
+ case'F':R('#2a6fdb',x+4,y+5,8,8);R('#f1c27d',x+5,y+1,6,6);break;
+ case'B':R('#4a2f1c',x,y,T,T);for(let i=0;i<3;i++)for(let j=0;j<4;j++)R(BC[(c*3+r+i*2+j)%6],x+1+j*4,y+1+i*5,3,4);break;
+ case'T':R('#a8743c',x,y+2,T,T-4);R('#c48a4a',x,y+2,T,2);break;
+ case'C':R('#7a8aa0',x,y,T,4);R('#c9a06a',x+1,y+4,T-2,8);break;
+ case'S':R('#7d3350',x+1,y+3,T-2,5);R('#a04668',x+1,y+8,T-2,T-9);break;
+ case'V':R('#2a6fdb',x+1,y,T-2,T);R('#bde',x+3,y+2,T-6,7);break;
+ case'D':R('#3b2a1e',x,y+3,T,T-3);R('#7c5a3a',x,y+3,T,3);break;
+ case'P':R('#8a7f70',x,y+8,T,T-8);R('#111',x+3,y+1,10,8);R('#4ef',x+4,y+2,8,5);break;
+ case'X':R('#bbb',x+2,y+4,12,9);R('#fff',x+4,y+1,8,4);break;
+ case'G':R('#2f7d3a',x+1,y+4,14,11);R('#47a64f',x+4,y+2,8,6);break;
+ case'O':R('#3a3f6b',x,y,T,T);R('#7fb2ff',x+1,y+1,T-2,5);R('#caa26a',x+2,y+8,T-4,5);break;
+ case'U':case'N':for(let i=0;i<4;i++)R(i%2?'#aaa':'#ddd',x,y+i*4,T,3);break;
+ case'v':case'^':case'<':case'>':{
+  if(ch==='v'){R('#5a2c1c',x+3,y+3,10,3);R('#a0583a',x+3,y+6,10,7)}
+  if(ch==='^'){R('#a0583a',x+3,y+3,10,7);R('#5a2c1c',x+3,y+10,10,3)}
+  if(ch==='>'){R('#5a2c1c',x+3,y+3,3,10);R('#a0583a',x+6,y+3,7,10)}
+  if(ch==='<'){R('#a0583a',x+3,y+3,7,10);R('#5a2c1c',x+10,y+3,3,10)}
+  const v=st.get(c+','+r);R('#000',x+4,y+4,8,8);R(v===undefined?'#888':v?'#e84a5f':'#7bd152',x+5,y+5,6,6);break}}}
+
+function seatMap(i){const m=new Map();if(snap&&snap.floors[i])snap.floors[i].seats.forEach(s=>m.set(s.c+','+s.r,s.o));
+ TABLES.filter(t=>t.floor===i).forEach(t=>{const n=act(t.id).length;t.seats.forEach(([c,r],k)=>{if(k<n)m.set(c+','+r,1);else if(!snap&&!m.has(c+','+r))m.set(c+','+r,0)})});return m}
+
+function render(){
+ const L=LV[cur],st=seatMap(cur);
+ g.fillStyle='#000';g.fillRect(0,0,cv.width,cv.height);
+ L.map.forEach((row,r)=>[...row].forEach((ch,c)=>tile(ch,c,r,L,st)));overlay();
+ const el=document.getElementById('status');
+ if(!snap){el.style.color='#e84a5f';el.textContent='NOT CONNECTED. IN THE GAME, SCAN THE RECEPTION QR CODE (E) AND OPEN THE LIVE MAP.';document.getElementById('sum').innerHTML=summary();detail();return}
+ const age=(Date.now()-snap.t)/1000;
+ if(age>20){el.style.color='#ffcc4d';el.textContent='GAME PAUSED OR CLOSED. LAST UPDATE '+Math.round(age)+'s AGO.'}
+ else{el.style.color='#7bd152';el.textContent='LIVE. UPDATED '+new Date(snap.t).toLocaleTimeString()}
+ document.getElementById('sum').innerHTML=summary();detail();
+}
+
+/* ===== Sync with Library Quest ===== */
+function load(){try{const d=JSON.parse(localStorage.getItem(KEY));if(d&&d.floors)snap=d}catch(e){}if(!DB)try{const c=JSON.parse(localStorage.getItem('lib-checkins'));if(Array.isArray(c))CIN=c}catch(e){}}
+function refresh(){load();render();pull()}
+try{const bc=new BroadcastChannel(KEY);bc.onmessage=e=>{if(e.data&&e.data.floors){snap=e.data;render()}}}catch(e){}
+addEventListener('message',e=>{const m=e.data;if(m&&m.type==='lib-occ'&&m.data&&m.data.floors){snap=m.data;render()}});
+addEventListener('message',e=>{const m=e.data;if(m&&m.type==='lib-checkins'&&Array.isArray(m.data)){CIN=m.data;render()}});
+try{const bc2=new BroadcastChannel('lib-checkins');bc2.onmessage=e=>{if(Array.isArray(e.data)){CIN=e.data;render()}}}catch(e){}
+addEventListener('storage',e=>{if(e.key===KEY||e.key==='lib-checkins')refresh()});
+setInterval(()=>{if(auto)refresh()},2000);setInterval(detail,1000);
+
+document.getElementById('refresh').onclick=refresh;
+document.getElementById('auto').onclick=e=>{auto=!auto;e.target.textContent='AUTO: '+(auto?'ON':'OFF')};
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));b.classList.add('active');cur=+b.dataset.f;render()});
+refresh();
+</script>
+</body>
+</html>

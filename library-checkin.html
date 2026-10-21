@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Library Check-In</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#14101f;--fg:#f3e9d2;--ac:#ffcc4d;--pn:#241c3a;--ln:#6a5acd;--ok:#7bd152;--no:#e84a5f;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:dark}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#14101f;--fg:#f3e9d2;--ac:#ffcc4d;--pn:#241c3a;--ln:#6a5acd}}
+:root[data-theme="dark"]{--bg:#14101f;--fg:#f3e9d2;--ac:#ffcc4d;--pn:#241c3a;--ln:#6a5acd}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--fg);font-family:'Press Start 2P',ui-monospace,Menlo,monospace}
+body{display:flex;flex-direction:column;align-items:center;gap:12px;padding:12px}
+header{width:min(100%,520px);border-bottom:3px solid var(--ln);padding-bottom:10px}
+h1{margin:0;font-size:clamp(10px,3vw,15px);color:var(--ac);text-shadow:2px 2px #6a2d8f}
+.card{width:min(100%,520px);background:var(--pn);border:3px solid var(--ln);padding:14px;display:flex;flex-direction:column;gap:12px;box-shadow:4px 4px #000;font-size:9px;line-height:1.8;text-align:center}
+.big{font-size:15px;color:var(--ac)}.sub{font-size:7px;color:#9d92c8}
+.timer{font-size:22px;color:var(--ok)}
+.hrs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.row{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+button,select,input{font:inherit;font-size:9px;background:var(--pn);color:var(--fg);border:2px solid var(--ln);padding:12px 10px;cursor:pointer;touch-action:manipulation}
+input,select{background:#000;color:var(--ac);text-align:center;cursor:text}
+button:active{background:var(--ln)}button.primary{background:#27ae60;border-color:#2ecc71;color:#fff}
+.err{color:var(--no);font-size:8px;min-height:12px}
+a{color:var(--ac);font-size:8px}
+.sheet{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+.qr{background:#fff;color:#000;padding:8px;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:8px}
+</style>
+</head>
+<body>
+<header><h1>LIBRARY CHECK-IN</h1></header>
+<div class="card" id="main"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+/* ===== Floor maps (same as Library Quest; used to find the tables) ===== */
+const NAMES=['RECEPTION','QUIET FLOOR','SILENT FLOOR'];
+const MAPS=[
+["##WW##WW########WW##WW##","#V..G..I..F.F..I...G...#","#........DDQDD.........#","#G....................G#","#..vv..............vv..#","#..TT..............TT..#","#..^^..............^^..#","#......................#","#.SSSS..........SSSS...#","#......................#","#.BBBB....I....I..BBBB.#","#.....................U#","#......................#","########################"],
+["########K####K####K#####","#.....vv...vv...vv.....#","W>T<..TT...TT...TT..>T<W","#>T<..^^...^^...^^..>T<#","#...I..............I...#","#....BBBBBB..BBBBBB....#","W>T<....CC.CC.CC....>T<W","#>T<.......XX.......>T<#","#....BBBBBB..BBBBBB....#","#......................#","W>T<..vv...vv...vv..>T<W","#>T<..TT...TT...TT..>T<#","#N....^^...^^...^^....U#","########K####K####K#####"],
+["########K####K####K#####","#.....vv...vv...vv.....#","W>T<..TT...TT...TT..>T<W","#>T<..^^...^^...^^..>T<#","#...I..............I...#","#....OO..OO..OO..GG....#","W>T<....PPP.PPP.....>T<W","#>T<.......I...I....>T<#","#....OO..OO..OO..GG....#","#......................#","W>T<..vv...vv...vv..>T<W","#>T<..TT...TT...TT..>T<#","#N....^^...^^...^^.....#","########K####K####K#####"]];
+/* a table = its T tiles + the chairs around them. IDs: F<floor>-T<n> in reading order */
+function buildTables(){const out=[];MAPS.forEach((M,fi)=>{let n=0;const seen=new Set();M.forEach((row,r)=>[...row].forEach((ch,c)=>{
+ if(ch!=='T'||seen.has(c+','+r))return;const cells=[[c,r]];
+ if(M[r][c+1]==='T')cells.push([c+1,r]);else if(M[r+1]&&M[r+1][c]==='T')cells.push([c,r+1]);
+ cells.forEach(([a,b])=>seen.add(a+','+b));const seats=[];
+ cells.forEach(([a,b])=>[[0,-1,'v'],[0,1,'^'],[-1,0,'>'],[1,0,'<']].forEach(([dx,dy,k])=>{if((M[b+dy]||'')[a+dx]===k)seats.push([a+dx,b+dy])}));
+ out.push({id:'F'+(fi+1)+'-T'+(++n),floor:fi,cells,seats})}))});return out}
+
+/* ===== Shared check-in data (read by the Library Table Occupancy viewer) ===== */
+const KEY='lib-checkins',MAX_H=6,MIN_H=.5,TABLES=buildTables(),$=id=>document.getElementById(id);
+/* ===== Shared database (optional) =====
+ Paste your Cloudflare Worker URL between the quotes, e.g. 'https://library-checkin.your-name.workers.dev'
+ Use the SAME URL in library-table-map.html. Leave empty to stay in local-only mode. */
+const DB_URL='https://library-checkin.nawfalnajmi8.workers.dev';
+const DB=DB_URL.replace(/\/$/,'');let REMOTE=[];
+async function sync(){if(!DB)return;try{const d=await(await fetch(DB+'/checkins')).json();if(Array.isArray(d))REMOTE=d}catch(e){}}
+function addSession(s){push([...all(),s])}
+function removeSession(id){const a=all().filter(x=>x.id!==id);if(DB){REMOTE=a;let t='';try{t=localStorage.getItem('lib-token')||''}catch(e){}fetch(DB+'/checkins/'+id,{method:'DELETE',headers:{'X-Token':t}}).catch(()=>{})}push(a)}
+let tableId=new URLSearchParams(location.search).get('t'),mapWin=null,tick=null;
+let bc=null;try{bc=new BroadcastChannel(KEY)}catch(e){}
+const all=()=>{if(DB)return REMOTE.filter(s=>s.end>Date.now());try{return(JSON.parse(localStorage.getItem(KEY))||[]).filter(s=>s.end>Date.now())}catch(e){return[]}};
+function push(a){try{localStorage.setItem(KEY,JSON.stringify(a))}catch(e){}try{bc&&bc.postMessage(a)}catch(e){}try{if(mapWin&&!mapWin.closed)mapWin.postMessage({type:KEY,data:a},'*')}catch(e){}}
+const mine=()=>{try{return localStorage.getItem('lib-mine')}catch(e){return null}};
+const setMine=v=>{try{v?localStorage.setItem('lib-mine',v):localStorage.removeItem('lib-mine')}catch(e){}};
+const fmt=ms=>{const s=Math.max(0,Math.floor(ms/1000));return String(s/3600|0).padStart(2,'0')+':'+String(s%3600/60|0).padStart(2,'0')+':'+String(s%60).padStart(2,'0')};
+function openMap(){mapWin=window.open('library-table-map.html','libmap');setTimeout(()=>push(all()),800)}
+setInterval(()=>{if(mapWin&&!mapWin.closed)push(all())},3000);
+
+/* ===== Screens ===== */
+function setMain(h){clearInterval(tick);$('main').innerHTML=h}
+function view(){
+ if(new URLSearchParams(location.search).has('sheet'))return sheetView();
+ const me=all().find(s=>s.id===mine());if(me)return activeView(me);
+ if(!TABLES.some(t=>t.id===tableId))return pickView();
+ formView()}
+function pickView(){setMain(`<div class="big">CHOOSE YOUR TABLE</div><div class="sub">SCAN THE QR CODE ON YOUR TABLE, OR PICK IT HERE.</div><select id="ts">${TABLES.map(t=>`<option value="${t.id}">FLOOR ${t.floor+1} · TABLE ${t.id}</option>`).join('')}</select><button id="pg" class="primary">CONTINUE</button><a href="?sheet=1">PRINT TABLE QR CODES</a>`);
+ $('pg').onclick=()=>{tableId=$('ts').value;view()}}
+function formView(){const t=TABLES.find(x=>x.id===tableId),n=all().filter(s=>s.table===t.id).length;
+ setMain(`<div class="big">TABLE ${t.id}</div><div class="sub">FLOOR ${t.floor+1} · ${NAMES[t.floor]} · ${n}/${t.seats.length} SEATS TAKEN</div>
+ <div>HOW MANY HOURS WILL YOU STUDY?</div>
+ <div class="hrs">${[1,2,3,4,5,6].map(h=>`<button data-h="${h}">${h}H</button>`).join('')}</div>
+ <div class="sub">OR TYPE HOURS (MAX ${MAX_H})</div>
+ <input id="hin" type="number" min="${MIN_H}" max="${MAX_H}" step="0.5" inputmode="decimal" placeholder="e.g. 2.5">
+ <div class="err" id="err"></div><button id="go" class="primary">START STUDYING</button><a href="?">CHANGE TABLE</a>`);
+ document.querySelectorAll('[data-h]').forEach(b=>b.onclick=()=>{$('hin').value=b.dataset.h;$('err').textContent=''});
+ $('go').onclick=async()=>{const h=parseFloat($('hin').value),err=$('err');
+  if(!(h>0))return err.textContent='ENTER YOUR STUDY HOURS.';
+  if(h>MAX_H)return err.textContent='MAXIMUM IS '+MAX_H+' HOURS.';
+  if(h<MIN_H)return err.textContent='MINIMUM IS '+MIN_H+' HOUR.';
+  const cur=all();if(cur.filter(s=>s.table===t.id).length>=t.seats.length)return err.textContent='THIS TABLE IS FULL.';
+  const s={id:Math.random().toString(36).slice(2,10),table:t.id,start:Date.now(),end:Date.now()+Math.round(h*60)*60000,h};
+  if(DB){try{const r=await fetch(DB+'/checkins',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table:t.id,h})}),d=await r.json();if(!r.ok)return err.textContent=String(d.error||'FAILED').toUpperCase();REMOTE.push(d.session);try{localStorage.setItem('lib-token',d.token)}catch(e){}setMine(d.session.id);push(all());view()}catch(e){err.textContent='NETWORK ERROR. TRY AGAIN.'}return}
+  addSession(s);setMine(s.id);view()}}
+function activeView(me){const t=TABLES.find(x=>x.id===me.table);
+ setMain(`<div class="big">TABLE ${me.table}</div><div class="sub">FLOOR ${t.floor+1} · ${NAMES[t.floor]}</div><div>TIME LEFT</div><div class="timer" id="tm"></div>
+ <div class="sub">STUDYING UNTIL ${new Date(me.end).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
+ <div class="row"><button id="mp">LIVE TABLE MAP</button><button id="co" class="primary">CHECK OUT</button></div>`);
+ const upd=()=>{const s=all().find(x=>x.id===me.id);if(!s){setMine(null);return doneView()}$('tm').textContent=fmt(s.end-Date.now())};
+ upd();tick=setInterval(upd,1000);
+ $('mp').onclick=openMap;
+ $('co').onclick=()=>{removeSession(me.id);setMine(null);doneView()}}
+function doneView(){setMain(`<div class="big">THANK YOU!</div><div class="sub">YOUR SESSION HAS ENDED AND THE TABLE IS FREE.</div><button id="again" class="primary">NEW CHECK-IN</button>`);$('again').onclick=view}
+function sheetView(){const base=location.href.split('?')[0];
+ setMain(`<div class="big">TABLE QR CODES</div><div class="sub">PRINT AND PLACE ONE QR CODE ON EACH TABLE.</div><button onclick="print()">PRINT</button><div class="sheet">${TABLES.map(t=>`<div class="qr"><div id="q${t.id}"></div><b>${t.id}</b><span>FLOOR ${t.floor+1}</span></div>`).join('')}</div><a href="?">BACK</a>`);
+ if(typeof QRCode==='undefined')return $('main').insertAdjacentHTML('beforeend','<div class="err">QR LIBRARY NOT LOADED. CHECK YOUR INTERNET CONNECTION.</div>');
+ TABLES.forEach(t=>new QRCode($('q'+t.id),{text:base+'?t='+t.id,width:96,height:96}))}
+sync().then(view);setInterval(sync,10000);
+</script>
+</body>
+</html>
